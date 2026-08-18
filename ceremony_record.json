@@ -1,0 +1,30 @@
+{
+  "ceremony": "hexabox-root",
+  "entries": [
+    {
+      "issued_at_utc": "2026-08-18T20:50:31+00:00",
+      "root_id": "7e3fb8b30c077311",
+      "root_fingerprint": "b5569d76d434123dc2f42c9dc54c13fdde0540c0143d2c68bdb6e877372405d6",
+      "generator_pubkey_b64": "oM0oI93h1IQSb82t9zaD90wzVT3ttwTa7e+/OqRuuZU=",
+      "generator_id": "e74bfc9da2f3856e",
+      "generator_cert_b64": "fVnbYUj2ughc9cZtkxtsvvCQOpGj8DpHnJwUeD1VotOnd/k+awET6kF2+i5kNmBQG2PY3SxwnUFS1+4RnxUvCQ==",
+      "witnesses": [
+        "Karin Lindh"
+      ],
+      "custody": "Root secret is held offline on a memory card in Comtank's custody (Sweden). It was written only to the ceremony machine's local file, transferred to the card, and removed from the machine after the ceremony (folder checked 2026-08-18T21:12:45+00:00: no secret files remain). The generator secret was installed only in the factory environment (Supabase secret for agent-identity-sign) and likewise removed from the machine.",
+      "note": "Public entry. Filled in by hand after the ceremony from the operator's statements and the live factory check.",
+      "operator": "Comtank (HexaBox operator)",
+      "environment": "Ceremony run on the operator's workstation with Wi-Fi off; a wired connection was present, so the machine was not air-gapped. Tool: hexabox-vault tools/trust/ceremony.py (pure-python Ed25519), values printed to the terminal and pasted into the factory's secret store by the operator.",
+      "factory_verification": {
+        "checked_at_utc": "2026-08-18T21:12:45+00:00",
+        "agent_identity_sign_info": {
+          "trust_mode": "root_offline_cert",
+          "root_fingerprint": "b5569d76d434123dc2f42c9dc54c13fdde0540c0143d2c68bdb6e877372405d6",
+          "root_id": "7e3fb8b30c077311",
+          "generator_id": "e74bfc9da2f3856e"
+        },
+        "method": "POST {action:info} to the live function; root/generator public keys and certificate compared with this record; certificate re-verified independently with the repository's pure-python Ed25519 \u2014 all equal/valid"
+      }
+    }
+  ]
+}

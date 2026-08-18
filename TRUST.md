@@ -4,9 +4,17 @@ This repository is the public trust anchor for HexaBox artifacts (blocker B9). O
 
 ## Root
 
-**No root is anchored yet.** The root-key ceremony (offline generation, certificate issuance, custody record) has not been performed. Until a fingerprint appears in this section, treat every HexaBox artifact you receive as **unanchored**: `verify_identity.py` without `--trusted-root` still proves the artifact's internal integrity and consistency, not organisational origin. Do not accept a root fingerprint from any other source — including a document, an e-mail or the artifact itself — as if it were published here.
+| | |
+|---|---|
+| Root public key (base64) | `DFSZPG2vtCa+t7f8oJFtw9WLzzfu1omTgDYDxWZB0fU=` |
+| **Root fingerprint** (sha256 of the base64 text as shipped in `root.pub`) | `b5569d76d434123dc2f42c9dc54c13fdde0540c0143d2c68bdb6e877372405d6` |
+| Ceremony | see `ceremony_record.json` (date, witnesses, custody) |
 
-When the ceremony has been performed this section will carry the root public key, its fingerprint (sha256 of the base64 text as shipped in `root.pub`) and a link to `ceremony_record.json`; the commit that adds them will be tagged.
+Verify any HexaBox agent bundle against this root:
+
+    python3 verify_identity.py <bundle_dir> --trusted-root b5569d76d434123dc2f42c9dc54c13fdde0540c0143d2c68bdb6e877372405d6
+
+(`verify_identity.py` ships in every bundle; a reference copy is published here once the first bundle generated under the anchored root exists — until then compare it against the copy inside a bundle you obtained through a second channel.)
 
 ## Release unreleased — pins
 
@@ -25,6 +33,7 @@ When the ceremony has been performed this section will carry the root public key
 | `verifiers/delivery_manifest.py` | `52027c06400cfbb0e4656fd400b80e82eedacae54a6fcec07d8639db9f2546fa` |
 | `verifiers/fleet_manifest.py` | `a48dab4803fd0173f3f7952f14d5e9e9c5a97625e8bf74cc7d0d88e95a32a181` |
 | `verifiers/test_outer_verifiers.py` | `b32ff6006ea1f1afe270bbc8d4a16041af297f1cf574e46ebdd0606538ec64c0` |
+| `ceremony_record.json` | `81695ad4db7e4a161f8c70eae2567c8761cad7cb524920a6afb9aba983514196` |
 | `revocations.json` | `199f24efc0e284ace0e52a0be7da78c586993c4a3aa5362687b718e0ca2dd628` |
 
 ## Revocations
@@ -35,6 +44,6 @@ When the ceremony has been performed this section will carry the root public key
 
 A new root is announced here with a cross-signature from the old root and both fingerprints listed for the transition period. Reference (demo) keys used for CI and the Proving Ground are never listed here.
 
-
+Ceremony record: `ceremony_record.json` (sha256 `81695ad4db7e4a161f8c70eae2567c8761cad7cb524920a6afb9aba983514196`).
 
 *Published 2026-08-18. Status classes: values here are DELIVERED AND SIGNED once a release is tagged; before that, POST-DELIVERY, UNSIGNED.*
