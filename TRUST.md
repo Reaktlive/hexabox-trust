@@ -14,7 +14,7 @@ Verify any HexaBox agent bundle against this root:
 
     python3 verify_identity.py <bundle_dir> --trusted-root b5569d76d434123dc2f42c9dc54c13fdde0540c0143d2c68bdb6e877372405d6
 
-(`verify_identity.py` ships in every bundle; a reference copy is published here once the first bundle generated under the anchored root exists — until then compare it against the copy inside a bundle you obtained through a second channel.)
+(`verify_identity.py` ships in every bundle; compare its sha256 with the reference copy listed below before running it.)
 
 ## Release unreleased — pins
 
@@ -33,6 +33,7 @@ Verify any HexaBox agent bundle against this root:
 | `verifiers/delivery_manifest.py` | `52027c06400cfbb0e4656fd400b80e82eedacae54a6fcec07d8639db9f2546fa` |
 | `verifiers/fleet_manifest.py` | `a48dab4803fd0173f3f7952f14d5e9e9c5a97625e8bf74cc7d0d88e95a32a181` |
 | `verifiers/test_outer_verifiers.py` | `b32ff6006ea1f1afe270bbc8d4a16041af297f1cf574e46ebdd0606538ec64c0` |
+| `verifiers/verify_identity.py` | `e4a6fafc4efbe9ed4e3d9041ed0f01a7ba30eeb718e7663a49561453ac55827d` |
 | `ceremony_record.json` | `81695ad4db7e4a161f8c70eae2567c8761cad7cb524920a6afb9aba983514196` |
 | `revocations.json` | `199f24efc0e284ace0e52a0be7da78c586993c4a3aa5362687b718e0ca2dd628` |
 
