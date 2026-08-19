@@ -133,8 +133,19 @@ def test_fleet_verify_refuses_without_pin_and_rejects_pin_mismatch(mini_package)
     root, fleet, pin = mini_package
     rc, out = _run(fleet, "verify_fleet_manifest.py")
     assert rc == 2 and "REFUSED" in out
-    rc, out = _run(fleet, "verify_fleet_manifest.py", "--trusted-pubkey", "22" * 32)
+    rc, out = _run(fleet, "verify_fleet_manifest.py", "--trusted-pubkey", "22" * 32, "--expected-members", "1")
     assert rc == 1 and "does not match the trusted pin" in out
+
+
+def test_fleet_verify_refuses_without_expected_member_count(mini_package):
+    # The member count is a delivery fact supplied out of band (like the pin):
+    # without it the verifier refuses to run, so a padded/incomplete fleet cannot
+    # pass by being compared against itself.
+    root, fleet, pin = mini_package
+    rc, out = _run(fleet, "verify_fleet_manifest.py", "--trusted-pubkey", pin)
+    assert rc == 2 and "expected member count not supplied" in out
+    rc, out = _run(fleet, "verify_fleet_manifest.py", "--trusted-pubkey", pin, "--expected-members", "0")
+    assert rc == 2 and "positive integer" in out
 
 
 # ── 3. signed identity-UUID ↔ operational fleet-slug alias (Peter v2 #6) ────

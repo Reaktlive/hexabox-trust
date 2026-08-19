@@ -3,8 +3,8 @@
 
 Run from inside 00_Fleet/:
 
-    python3 verify_fleet_manifest.py --trusted-pubkey <64-hex received out-of-band>
-    (or FLEET_TRUSTED_PUBKEY=<64-hex> python3 verify_fleet_manifest.py)
+    python3 verify_fleet_manifest.py --trusted-pubkey <64-hex received out-of-band> --expected-members <N from the delivery documentation>
+    (or FLEET_TRUSTED_PUBKEY=<64-hex> FLEET_EXPECTED_MEMBERS=<N> python3 verify_fleet_manifest.py)
 
 Checks, fail-closed:
   1. the Ed25519 signature over the canonical manifest body, against the
@@ -97,7 +97,27 @@ def find_folder_files(folder):
     return (z[0] if z else None, p[0] if p else None, pl[0] if pl else None, dupes)
 
 
-EXPECTED_MEMBERS = 8
+# Expected member count is a delivery fact the receiver reads from the package
+# documentation and supplies OUT OF BAND — like the pin. It is deliberately not
+# read from the manifest (a manifest can bind any number of members) and not
+# hard-coded (the tool is generic across fleets). Without it the verifier
+# REFUSES to run (exit 2), so an incomplete or padded fleet cannot pass.
+def resolve_expected_members(argv, env_var="FLEET_EXPECTED_MEMBERS"):
+    raw = None
+    if "--expected-members" in argv:
+        i = argv.index("--expected-members")
+        raw = argv[i + 1] if i + 1 < len(argv) else None
+    raw = (raw or os.environ.get(env_var, "")).strip()
+    if not raw:
+        print("FLEET MANIFEST: REFUSED — expected member count not supplied. Read it from the delivery "
+              f"documentation and pass --expected-members <N> (or {env_var}=<N>). The count in the manifest "
+              "itself is what is being verified and cannot be its own reference.")
+        sys.exit(2)
+    if not raw.isdigit() or int(raw) < 1:
+        print("FLEET MANIFEST: REFUSED — --expected-members must be a positive integer.")
+        sys.exit(2)
+    return int(raw)
+
 # Public key of the DEMO fleet-manifest seed (sha256("DEMO-FLEET-MANIFEST-KEY-2026-08-14")).
 DEMO_FLEET_PUBKEY_HEX = "b8234b47b145e58d58f27cebdde141624bb9c0aa83e0a3af42fbdc91d2b3c3cc"
 
@@ -161,9 +181,10 @@ def main():
     except (OSError, ValueError):
         runtime_registry = None
         pre_reasons.append("runtime_registry_missing_or_unreadable")
+    expected_members = resolve_expected_members(sys.argv)
     ok, reasons = fm.verify_manifest(
         manifest, verify_sig=verify_sig,
-        expected_members=EXPECTED_MEMBERS, runtime_registry=runtime_registry,
+        expected_members=expected_members, runtime_registry=runtime_registry,
     )
     reasons = pre_reasons + reasons
     ok = ok and not pre_reasons
@@ -261,7 +282,7 @@ def main():
         for r in sorted(set(reasons)):
             print("   -", r)
         sys.exit(1)
-    print(f"FLEET MANIFEST: PASS — exactly {EXPECTED_MEMBERS} agents bound, coordinator is a member, "
+    print(f"FLEET MANIFEST: PASS — exactly {expected_members} agents bound, coordinator is a member, "
           f"one shared generator+root fingerprint, signature valid, runtime registry == manifest projection, "
           f"and every artifact + karta hash re-derived from the delivered files.")
     if pub == DEMO_FLEET_PUBKEY_HEX:

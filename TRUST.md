@@ -29,10 +29,10 @@ Verify any HexaBox agent bundle against this root:
 |---|---|
 | `verifiers/verify_delivery_standalone.py` | `da2b3ca436bf05110dc7128d1d59e70f7b8e412be6f91dccd19a3478bc63830c` |
 | `verifiers/ed25519_verify.py` | `16b12bc2b0c984a928e34f4dbeff02746eae5af838035aaa95536c325c984b5a` |
-| `verifiers/verify_fleet_manifest.py` | `5fedb32c07083496e4ecb00789747e3e14c20a211dd5b27e85117b943d6332a9` |
+| `verifiers/verify_fleet_manifest.py` | `2ae84c8faa704a46b2c92d0ba52fbd6c96fa4ba88d12dead1bc58dd6c50cdcd1` |
 | `verifiers/delivery_manifest.py` | `52027c06400cfbb0e4656fd400b80e82eedacae54a6fcec07d8639db9f2546fa` |
 | `verifiers/fleet_manifest.py` | `a48dab4803fd0173f3f7952f14d5e9e9c5a97625e8bf74cc7d0d88e95a32a181` |
-| `verifiers/test_outer_verifiers.py` | `b32ff6006ea1f1afe270bbc8d4a16041af297f1cf574e46ebdd0606538ec64c0` |
+| `verifiers/test_outer_verifiers.py` | `877bb41d1cbf82e4853383b2d104bd8eac6925fda971381d2381d56e702b8583` |
 | `verifiers/verify_identity.py` | `e4a6fafc4efbe9ed4e3d9041ed0f01a7ba30eeb718e7663a49561453ac55827d` |
 | `ceremony_record.json` | `81695ad4db7e4a161f8c70eae2567c8761cad7cb524920a6afb9aba983514196` |
 | `revocations.json` | `199f24efc0e284ace0e52a0be7da78c586993c4a3aa5362687b718e0ca2dd628` |
@@ -47,4 +47,4 @@ A new root is announced here with a cross-signature from the old root and both f
 
 Ceremony record: `ceremony_record.json` (sha256 `81695ad4db7e4a161f8c70eae2567c8761cad7cb524920a6afb9aba983514196`).
 
-*Published 2026-08-18. Status classes: values here are DELIVERED AND SIGNED once a release is tagged; before that, POST-DELIVERY, UNSIGNED.*
+*Published 2026-08-19. Status classes: values here are DELIVERED AND SIGNED once a release is tagged; before that, POST-DELIVERY, UNSIGNED.*
