@@ -188,6 +188,17 @@ def main() -> None:
         identity = json.loads(open(os.path.join(base, "identity.json")).read())
     except Exception as e:
         fail(f"cannot read identity.json: {e}")
+    # delivery_mode HANDOFF — a customer-owned, UNSIGNED, editable build. It carries
+    # delivery_mode == "handoff" and signature == null and makes NO attestation
+    # claim, so there is no signature chain and no signed file manifest to verify.
+    # Print a clear banner and exit 0 WITHOUT running the signature/manifest checks.
+    # This is exactly what makes a handoff bundle freely editable (no signature to
+    # break) AND what stops a handoff masquerading as sealed: a SEALED bundle never
+    # has delivery_mode == "handoff" (a missing/invalid signature still FAILS below),
+    # and a handoff bundle never carries a signature to trust.
+    if identity.get("delivery_mode") == "handoff" and identity.get("signature") is None:
+        print("HANDOFF (unsigned, editable) — not attested")
+        sys.exit(0)
     if identity.get("signature_pending"):
         fail(f"identity is PENDING (no signature shipped): {identity.get('signature_pending_reason')}")
 
