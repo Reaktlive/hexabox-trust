@@ -33,7 +33,7 @@ Verify any HexaBox agent bundle against this root:
 | `verifiers/delivery_manifest.py` | `52027c06400cfbb0e4656fd400b80e82eedacae54a6fcec07d8639db9f2546fa` |
 | `verifiers/fleet_manifest.py` | `a48dab4803fd0173f3f7952f14d5e9e9c5a97625e8bf74cc7d0d88e95a32a181` |
 | `verifiers/test_outer_verifiers.py` | `877bb41d1cbf82e4853383b2d104bd8eac6925fda971381d2381d56e702b8583` |
-| `verifiers/verify_identity.py` | `e4a6fafc4efbe9ed4e3d9041ed0f01a7ba30eeb718e7663a49561453ac55827d` |
+| `verifiers/verify_identity.py` | `dd208e72315c9959967c0eac720c8a944889fd400abd0978d412ea06bff2a952` |
 | `ceremony_record.json` | `81695ad4db7e4a161f8c70eae2567c8761cad7cb524920a6afb9aba983514196` |
 | `revocations.json` | `199f24efc0e284ace0e52a0be7da78c586993c4a3aa5362687b718e0ca2dd628` |
 
