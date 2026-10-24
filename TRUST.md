@@ -22,7 +22,7 @@ Verify any HexaBox agent bundle against this root:
 |---|---|
 | Fleet manifest signer (`verify_fleet_manifest.py --trusted-pubkey`) | `not yet published` |
 | Delivery manifest signer (`verify_delivery_standalone.py --trusted-pubkey`) | `not yet published` |
-| **Action attestation signer** (`verify_action_attestation.py --trusted-pubkey`; spec `ACTION_ATTESTATION.md`; one pin per fleet instance, labelled by `signer.id`) | `not yet published — provisioned on the instance, pinned here on first publish` |
+| **Action attestation signer** (`verify_action_attestation.py --trusted-pubkey`; spec `ACTION_ATTESTATION.md`; one pin per fleet instance, labelled by `signer.id`) | instance `ds5777` (Eihwaz fleet, executor agent `92052e6a-b350-41c8-8c51-5ba50da5a1d7`) · signer_id `ae3aeb73b0c64f67` · pubkey `TvoNGiXYfJSD0GjhBodX/UwOWeYNyxhOIVnWN+wNSj0=` · pinned 2026-10-24 |
 
 ## Verifiers (byte-identical copies; compare sha256 before running any in-package tool)
 
