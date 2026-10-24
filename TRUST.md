@@ -22,6 +22,7 @@ Verify any HexaBox agent bundle against this root:
 |---|---|
 | Fleet manifest signer (`verify_fleet_manifest.py --trusted-pubkey`) | `not yet published` |
 | Delivery manifest signer (`verify_delivery_standalone.py --trusted-pubkey`) | `not yet published` |
+| **Action attestation signer** (`verify_action_attestation.py --trusted-pubkey`; spec `ACTION_ATTESTATION.md`; one pin per fleet instance, labelled by `signer.id`) | `not yet published — provisioned on the instance, pinned here on first publish` |
 
 ## Verifiers (byte-identical copies; compare sha256 before running any in-package tool)
 
@@ -34,8 +35,10 @@ Verify any HexaBox agent bundle against this root:
 | `verifiers/fleet_manifest.py` | `a48dab4803fd0173f3f7952f14d5e9e9c5a97625e8bf74cc7d0d88e95a32a181` |
 | `verifiers/test_outer_verifiers.py` | `877bb41d1cbf82e4853383b2d104bd8eac6925fda971381d2381d56e702b8583` |
 | `verifiers/verify_identity.py` | `dd208e72315c9959967c0eac720c8a944889fd400abd0978d412ea06bff2a952` |
+| `verifiers/verify_action_attestation.py` | `4c12842e1574038e96d07b02ff277755f6f843502ace6daa4c93d274a3d045e1` |
 | `ceremony_record.json` | `81695ad4db7e4a161f8c70eae2567c8761cad7cb524920a6afb9aba983514196` |
 | `revocations.json` | `199f24efc0e284ace0e52a0be7da78c586993c4a3aa5362687b718e0ca2dd628` |
+| `ACTION_ATTESTATION.md` | `561963e4f237480b89f949621f50c335af84e0bb6cdec482788b7f7d03187fe0` |
 
 ## Revocations
 
