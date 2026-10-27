@@ -14,9 +14,9 @@ Verify any HexaBox agent bundle against this root:
 
     python3 verify_identity.py <bundle_dir> --trusted-root b5569d76d434123dc2f42c9dc54c13fdde0540c0143d2c68bdb6e877372405d6
 
-(`verify_identity.py` ships in every bundle; compare its sha256 with the reference copy listed below before running it.)
+The independent check is to run the reference copy from this repository (`verifiers/verify_identity.py`, sha256 below) against the bundle. Every bundle also ships its own `verify_identity.py`; those copies are later generations of the same verifier, covered by the bundle's signed manifest, and do not have the reference copy's hash.
 
-## Release unreleased — pins
+## Pins
 
 | Pin | Value |
 |---|---|
@@ -24,7 +24,7 @@ Verify any HexaBox agent bundle against this root:
 | Delivery manifest signer (`verify_delivery_standalone.py --trusted-pubkey`) | `not yet published` |
 | **Action attestation signer** (`verify_action_attestation.py --trusted-pubkey`; spec `ACTION_ATTESTATION.md`; one pin per fleet instance, labelled by `signer.id`) | instance `ds5777` (Eihwaz fleet, executor agent `92052e6a-b350-41c8-8c51-5ba50da5a1d7`) · signer_id `ae3aeb73b0c64f67` · pubkey `TvoNGiXYfJSD0GjhBodX/UwOWeYNyxhOIVnWN+wNSj0=` · pinned 2026-10-24 |
 
-## Verifiers (byte-identical copies; compare sha256 before running any in-package tool)
+## Reference verifiers and files (sha256 of the files in this repository)
 
 | File | sha256 |
 |---|---|
@@ -38,7 +38,7 @@ Verify any HexaBox agent bundle against this root:
 | `verifiers/verify_action_attestation.py` | `4c12842e1574038e96d07b02ff277755f6f843502ace6daa4c93d274a3d045e1` |
 | `ceremony_record.json` | `81695ad4db7e4a161f8c70eae2567c8761cad7cb524920a6afb9aba983514196` |
 | `revocations.json` | `199f24efc0e284ace0e52a0be7da78c586993c4a3aa5362687b718e0ca2dd628` |
-| `ACTION_ATTESTATION.md` | `5103dc3d900cd1742cb2be66f7c469ab8a950190ffb063588bbd1d328137cdce` |
+| `ACTION_ATTESTATION.md` | `96c364736dcd7bc1cded7cc8c67fd55c53debc9bb549ee60011b95c430ce3b5c` |
 
 ## Revocations
 
