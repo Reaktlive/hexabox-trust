@@ -7,7 +7,7 @@ This repository is the public trust anchor for HexaBox artifacts (blocker B9). O
 | | |
 |---|---|
 | Root public key (base64) | `DFSZPG2vtCa+t7f8oJFtw9WLzzfu1omTgDYDxWZB0fU=` |
-| **Root fingerprint** (sha256 of the base64 text as shipped in `root.pub`) | `b5569d76d434123dc2f42c9dc54c13fdde0540c0143d2c68bdb6e877372405d6` |
+| **Root fingerprint** (sha256 of the base64 text in `root.pub` with the trailing newline removed; the value `verify_identity.py --trusted-root` takes) | `b5569d76d434123dc2f42c9dc54c13fdde0540c0143d2c68bdb6e877372405d6` |
 | Ceremony | see `ceremony_record.json` (date, witnesses, custody) |
 
 Verify any HexaBox agent bundle against this root:
@@ -38,7 +38,7 @@ Verify any HexaBox agent bundle against this root:
 | `verifiers/verify_action_attestation.py` | `4c12842e1574038e96d07b02ff277755f6f843502ace6daa4c93d274a3d045e1` |
 | `ceremony_record.json` | `81695ad4db7e4a161f8c70eae2567c8761cad7cb524920a6afb9aba983514196` |
 | `revocations.json` | `199f24efc0e284ace0e52a0be7da78c586993c4a3aa5362687b718e0ca2dd628` |
-| `ACTION_ATTESTATION.md` | `561963e4f237480b89f949621f50c335af84e0bb6cdec482788b7f7d03187fe0` |
+| `ACTION_ATTESTATION.md` | `5103dc3d900cd1742cb2be66f7c469ab8a950190ffb063588bbd1d328137cdce` |
 
 ## Revocations
 
