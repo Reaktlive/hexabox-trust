@@ -10,7 +10,7 @@ When a HexaBox-governed agent performs a response action in an external system �
 X-HexaID-Attestation: <payload>.<signature>
 ```
 
-The header is a compact, Ed25519-signed statement that **this exact action**, against **this exact target**, was executed by **a named, signed HexaBox agent**, after **N independent, MFA-bound human approvals** recorded by the customer's command authority, under a stated **security posture**, for **this receiver** (audience) and **this single dispatch** (idempotency key), valid for five minutes.
+The header is a compact, Ed25519-signed statement that **this exact action**, against **this exact target**, was executed by **a named, signed HexaBox agent**, after **N independent human approvals** recorded by the customer's command authority (each with the MFA basis the authority recorded), under a stated **security posture**, for **this receiver** (audience) and **this single dispatch** (idempotency key), valid for five minutes.
 
 A receiver that does not know the header ignores it. Nothing is required of the receiver. A receiver that wants to know whether an incoming action is genuinely sanctioned verifies the header **offline**, with the standalone verifier or any Ed25519 library, against the signer public key published **here** — never against anything inside the token.
 
@@ -28,7 +28,7 @@ A receiver that does not know the header ignores it. Nothing is required of the 
 The token binds the layers that already exist inside a HexaBox fleet:
 
 1. **Standing identity.** The executing agent ships a root-chained, Ed25519-signed `identity.json` (schema `hexabox.identity/v1`). The runtime verifies that chain before it states `executor.identity_signed: true`. → `executor`. Capability leases that scope fleet members are a separate, internal layer and are not stated in this token.
-2. **Per-action sanction — approvals.** Every privileged action has a content-bound reference (hash over action, target, parameters, tenant, tier). An approval is a record pinned to that reference, made by an authenticated, role-holding, MFA-bound approver, with a single-use nonce; it carries an Ed25519 signature when the deployment configures approver keys. The fleet dispatches only when the number of distinct approvers reaches the stricter of the authority's stated requirement and the fleet's own floor (`FLEET_ACTION_APPROVAL_MIN`). Tier 4 requires two independent approvers. → `mandate`, `approval`.
+2. **Per-action sanction — approvals.** Every privileged action has a content-bound reference (hash over action, target, parameters, tenant, tier). An approval is a record pinned to that reference, made by an authenticated, role-holding approver whose MFA the authority records together with its basis (`mfa_basis`, for example `edge_session` when an authenticated operator console asserts the person, or `idp_claim` when the identity provider does; `edge_session` is not a second factor). The fleet counts approvers after normalising their names (Unicode NFKC, trimmed, whitespace collapsed, case-folded) and dispatches only when the number of distinct approvers reaches the strictest of the authority's stated requirement, the fleet's own floor (`FLEET_ACTION_APPROVAL_MIN`) and its tier floor: tier 4, or a tier the fleet cannot determine, always requires two. → `mandate`, `approval`.
 3. **The command itself.** An immutable logical command (`command_id`, `event_id`, `customer_id`, `action`, `provider_action`, `target`, `parameters`, validity window) with a SHA-256 digest; the durable lifecycle guarantees a single dispatch under one idempotency key. → `command`, `idempotency_key`.
 
 ## 4. Wire format
@@ -65,13 +65,14 @@ X-HexaID-Attestation: <base64url(payload_bytes)>.<base64url(signature)>
     "created_at": "…", "expires_at": "…", "digest": "<64 hex over the immutable command>"
   },
   "mandate": {
-    "tier": "tier_4", "basis": "…", "required_approvals": 2, "approval_floor": 1,
-    "approvals_given": 2, "source": "fleet dispatch gate: 2 independent MFA-bound approval(s) required …"
+    "tier": "tier_4", "tier_effective": "tier_4", "tier_resolution": "…", "tier_floor": 2,
+    "basis": "…", "required_approvals": 2, "approval_floor": 1, "approvals_given": 2,
+    "source": "fleet dispatch gate: 2 independent approval(s) the command authority recorded as MFA-bound required … MFA basis as the authority recorded it: edge_session. CCAS tier: tier_4."
   },
   "approval": {
     "authority": "soc_command_authority", "status": "approved",
     "revision": 2, "observed_at": "…", "required": 2, "required_effective": 2, "given": 2,
-    "approvers": [ { "principal_hash": "<16 hex>", "role": "supervisor", "at": "…" }, { … } ]
+    "approvers": [ { "principal_hash": "<16 hex>", "role": "supervisor", "at": "…", "mfa_basis": "edge_session" }, { … } ]
   },
   "posture": { "posture": "normal", "revision": 7 }
 }
@@ -87,8 +88,8 @@ X-HexaID-Attestation: <base64url(payload_bytes)>.<base64url(signature)>
 | `executor` | The executing agent's HexaID fields, copied from its signed `identity.json`. `identity_signed` is true only when the runtime verified the identity's Ed25519 chain at mint time (generator signature over the canonical identity, `generator.pub` and `root.pub` pins, root signature over the generator key). `identity_root_anchored` is true or false when the runtime pins a trusted root fingerprint, and null when it pins none (the chain was then checked for internal consistency only). A receiver that needs certainty verifies the identity itself with `verify_identity.py --trusted-root`. |
 | `signer` | The attestation signing key. **Verify against the pin on `TRUST.md`, not this field**; a verifier additionally refuses a token whose embedded key differs from the pinned one (`signer_not_pinned`). |
 | `command` | The immutable command and its digest. `target` and `parameters` are copied verbatim so the receiver can compare them with the request it is executing. |
-| `mandate` | What this command executed under: `tier` is the CCAS tier the command authority recorded for this command's proposal (null for an analyst override, which has no CCAS decision); `basis` is the authority's stated basis; `required_approvals` is the count the fleet enforced (the stricter of the authority's count and the fleet floor); `approval_floor` is that floor; `approvals_given` is the number of distinct approvers recorded. `source` restates these numbers in words. |
-| `approval` | Fresh read of the customer's command authority at dispatch: `status` (as read from the authority), `revision` (approvals recorded), `required` (what the authority demanded), `required_effective` (what the fleet enforced), `given` (distinct approvers), `approvers` (hashed principal, role, time). `principal_hash` = `sha256(casefold(whitespace-normalised principal_id))[:16]`. |
+| `mandate` | What this command executed under: `tier` is the CCAS tier the command authority recorded for the command; `tier_effective` is the tier the fleet enforced, `tier_resolution` how it was determined (a tier the fleet cannot determine is treated as tier 4) and `tier_floor` the approvals that tier requires; `basis` is the authority's stated basis; `required_approvals` is the count the fleet enforced (the strictest of the authority's count, the fleet floor and the tier floor); `approval_floor` is the fleet floor; `approvals_given` is the number of distinct approvers recorded. `source` restates these numbers and the recorded MFA basis in words. |
+| `approval` | Fresh read of the customer's command authority at dispatch: `status` (as read from the authority), `revision` (approvals recorded), `required` (what the authority demanded), `required_effective` (what the fleet enforced), `given` (distinct approvers), `approvers` (hashed principal, role, time, and `mfa_basis` as the authority recorded it, null when it recorded none). `principal_hash` = `sha256(normalised principal_id)[:16]`, where normalised means Unicode NFKC, trimmed, internal whitespace collapsed to one space, case-folded. |
 | `posture` | The customer's fleet posture and its revision at the commit window. Provider actions dispatch only under `normal`. |
 
 ## 6. Verification (normative)
