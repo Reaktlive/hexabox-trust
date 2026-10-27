@@ -10,14 +10,30 @@ chain WITHOUT any network access or third-party packages. Pure stdlib.
 --trusted-root <64-hex>  (B9, external trust anchor) the sha256 of the root
     public key exactly as shipped in root.pub (base64 text, stripped) — obtain it
     from a channel OTHER than this bundle (docs/verify_root_fingerprint.md). With
-    the pin the verifier FAILS on any bundle whose root is not the pinned root;
-    without it the chain is verified for internal consistency only and the
-    fingerprint is printed so you can compare it by hand.
+    the pin the verifier FAILS on any bundle whose root is not the pinned root
+    ('NOT ANCHORED', exit 1); without it the chain is verified for internal
+    consistency only and the fingerprint is printed so you can compare it by hand.
+    The flag may be given before or after the positional bundle_dir.
 
-Exits 0 with 'genuine ✓' on success, 1 on any tamper / signature failure.
+Exit codes and verdict (exactly ONE verdict line is printed):
+  0  'genuine ✓ …'          signature, root chain, reports, design and the
+                             signed file manifest all verify (and, with
+                             --trusted-root, the root is the pinned root).
+  1  'FAILED ✗ …'           any tamper, signature, chain, anchor or tree
+                             failure — including a broken root chain, a
+                             symlink anywhere in the tree, compiled Python
+                             (*.pyc / __pycache__) outside the signed
+                             runtime_outputs, and a manifest path that is not
+                             a normalised relative path.
+  2  'NOT VERIFIABLE ✗ …'   the bundle carries nothing to verify: an unsigned
+                             handoff build (delivery_mode "handoff", signature
+                             null) or a pending identity. Never exit 0.
+
+Values this verifier reports but does not re-measure (e.g. build-purity) are
+printed as the SIGNED value from identity.json, labelled "(signed)".
 """
 from __future__ import annotations
-import base64, hashlib, json, os, sys
+import base64, fnmatch, hashlib, json, os, posixpath, sys
 from typing import Any
 
 
@@ -104,7 +120,7 @@ def _is_identity(P) -> bool:
 def _is_small_order(P) -> bool:
     # A point whose order divides the cofactor 8: [8]P is the identity. A genuine
     # public key has prime order L, so [8]A is never the identity. Rejecting these
-    # closes the small-order / identity-key acceptance (external DD, Peter): a
+    # closes the small-order / identity-key acceptance (external DD reviewer finding): a
     # small-order public key could otherwise satisfy the verification equation for
     # crafted signatures across multiple messages.
     return _is_identity(_scalarmult(P, 8))
@@ -155,7 +171,7 @@ def canonical(v: Any) -> str:
 
 
 def payload_for(identity: dict) -> bytes:
-    """Fas 2.23 (external DD, Peter #5) — the SIGNED payload is the WHOLE identity
+    """Phase 2.23 (external DD reviewer finding #5) — the SIGNED payload is the WHOLE identity
     minus the signature itself. Every field is covered: agent_id, generator_id,
     owner, provenance_hash, conformance AND capabilities, algorithm, schema,
     doctrine_version, signed_at, and the generator/root pubkeys + root-chain link.
@@ -172,35 +188,246 @@ def fail(msg: str) -> None:
     sys.exit(1)
 
 
-def main() -> None:
-    argv = list(sys.argv[1:])
+def not_verifiable(msg: str) -> None:
+    print(f"NOT VERIFIABLE ✗ {msg}")
+    sys.exit(2)
+
+
+def parse_argv(argv: list) -> tuple:
+    """Split the CLI arguments into (bundle_dir, trusted_root).
+
+    `--trusted-root <64-hex>` may appear before or after the positional
+    bundle_dir, and the plain positional form `verify_identity.py [dir]` is
+    unchanged. bundle_dir is None when no positional was given (caller defaults
+    to the script's own directory); trusted_root is None when the flag is
+    absent, else the lower-cased 64-hex fingerprint. Raises ValueError on a
+    missing or malformed fingerprint so the caller can fail closed.
+    """
+    argv = list(argv)
     trusted_root = None
     if "--trusted-root" in argv:
         _i = argv.index("--trusted-root")
         if _i + 1 >= len(argv):
-            fail("--trusted-root requires a 64-hex sha256 fingerprint")
+            raise ValueError("--trusted-root requires a 64-hex sha256 fingerprint")
         trusted_root = argv[_i + 1].strip().lower()
         del argv[_i:_i + 2]
         if len(trusted_root) != 64 or any(c not in "0123456789abcdef" for c in trusted_root):
-            fail("--trusted-root must be a 64-hex sha256 fingerprint")
-    base = argv[0] if argv else os.path.dirname(os.path.abspath(__file__))
+            raise ValueError("--trusted-root must be a 64-hex sha256 fingerprint")
+    base = argv[0] if argv else None
+    return base, trusted_root
+
+
+def root_fingerprint(base: str):
+    """sha256 of root.pub exactly as shipped (base64 text, stripped) — the
+    definition docs/verify_root_fingerprint.md gives for the out-of-band compare.
+    Returns None when root.pub is missing or unreadable."""
+    try:
+        return hashlib.sha256(open(os.path.join(base, "root.pub")).read().strip().encode()).hexdigest()
+    except Exception:
+        return None
+
+
+def manifest_path_error(p: Any):
+    """Why a manifest entry path is not acceptable, or None. A manifest path
+    must be a RELATIVE, NORMALISED posix path inside the bundle: no absolute
+    path, no drive, no backslash, no '.'/'..'/empty segment, no NUL — so a
+    signed entry can never point the verifier outside the tree it checks."""
+    if not isinstance(p, str) or not p:
+        return "manifest entry path is missing or not a string"
+    if "\x00" in p or "\\" in p:
+        return f"manifest path {p!r} contains a NUL or backslash"
+    if p.startswith("/") or os.path.isabs(p) or (len(p) > 1 and p[1] == ":"):
+        return f"manifest path {p!r} is absolute"
+    segs = p.split("/")
+    if any(s in ("", ".", "..") for s in segs):
+        return f"manifest path {p!r} is not normalised (empty, '.' or '..' segment)"
+    if posixpath.normpath(p) != p:
+        return f"manifest path {p!r} is not normalised"
+    return None
+
+
+# Directories that hold metadata only and may legitimately appear in a checked-
+# out tree (a CI checkout's .git; pytest's cache; the *.egg-info of the shipped
+# package's own editable install). They are skipped ONLY while they contain no
+# executable Python and no symlink — anything else inside them is reported.
+_METADATA_DIRS = (".git", ".pytest_cache")
+_EXECUTABLE_SUFFIXES = (".py", ".pyc", ".pyo", ".pyd", ".so", ".pth")
+
+
+def _metadata_dir_problem(path: str, rel: str):
+    if os.path.basename(path) == ".git":
+        return None  # version-control metadata; never imported, may be skipped
+    for root, dirs, names in os.walk(path):
+        for d in dirs:
+            if os.path.islink(os.path.join(root, d)):
+                return f"symlink inside skipped metadata dir {rel}: {os.path.relpath(os.path.join(root, d), path)}"
+        for fn in names:
+            full = os.path.join(root, fn)
+            if os.path.islink(full):
+                return f"symlink inside skipped metadata dir {rel}: {os.path.relpath(full, path)}"
+            if fn.endswith(_EXECUTABLE_SUFFIXES):
+                return f"executable Python inside skipped metadata dir {rel}: {os.path.relpath(full, path)}"
+    return None
+
+
+def scan_tree(base: str, runtime: list, measured: list, excluded: set):
+    """Walk the delivered tree WITHOUT following symlinks. Returns
+    (files, measured_seen, problems): the delivered file set (relative posix
+    paths, minus signed exclusions / runtime_outputs / measured_outputs), the
+    measured outputs found, and the tree problems that fail verification:
+      * any symlink (file or directory) anywhere in the tree;
+      * compiled Python (*.pyc / *.pyo or a __pycache__ directory) that is not
+        covered by a SIGNED runtime_outputs pattern — a cached .pyc is
+        imported instead of its source, so it is code the manifest never saw;
+      * executable content or a symlink inside a skipped metadata directory.
+    Only .git is skipped unconditionally."""
+    def _rt(rel):
+        return any(fnmatch.fnmatch(rel, pat) for pat in runtime)
+
+    def _ms(rel):
+        return any(fnmatch.fnmatch(rel, pat) for pat in measured)
+
+    files, measured_seen, problems = set(), [], []
+    for root, dirs, names in os.walk(base, followlinks=False):
+        keep = []
+        for d in sorted(dirs):
+            full = os.path.join(root, d)
+            rel = os.path.relpath(full, base).replace(os.sep, "/")
+            if os.path.islink(full):
+                problems.append(f"symlink (directory) in tree: {rel}")
+                continue
+            if d in _METADATA_DIRS or d.endswith(".egg-info"):
+                prob = _metadata_dir_problem(full, rel)
+                if prob:
+                    problems.append(prob)
+                continue
+            if d == "__pycache__" and not _rt(rel + "/"):
+                # report the directory itself; its contents are compiled code
+                problems.append(f"compiled-Python cache directory in tree: {rel}")
+                continue
+            keep.append(d)
+        dirs[:] = keep
+        for fn in names:
+            full = os.path.join(root, fn)
+            rel = os.path.relpath(full, base).replace(os.sep, "/")
+            if os.path.islink(full):
+                problems.append(f"symlink in tree: {rel}")
+                continue
+            if _ms(rel):
+                measured_seen.append(rel)
+                continue
+            if rel in excluded or _rt(rel):
+                continue
+            if fn.endswith((".pyc", ".pyo")):
+                problems.append(f"compiled Python in tree: {rel}")
+                continue
+            files.add(rel)
+    return files, sorted(measured_seen), problems
+
+
+def verify_manifest(base: str, mconf: dict, notes: list = None):
+    """Re-verify the SIGNED file manifest. Returns an error string, or None on
+    success (disclosures, e.g. measured supply-chain files, are appended to
+    `notes` when a list is given). Factored out of main() so the manifest logic
+    is testable without a live Ed25519 signature.
+
+    The signature over identity.json covers `conformance` (see payload_for), and
+    the manifest hash is sealed INSIDE conformance, so every delivered FILE is
+    bound to the signed identity, not just the karta:
+      (a) MANIFEST.json's files array must hash to the SIGNED manifest_sha256;
+      (b) every listed path must be a normalised relative path, listed once,
+          and exist as a regular file (not a symlink) with the EXACT size +
+          sha256;
+      (c) no UNLISTED delivered file and none missing — the disk set (minus the
+          SIGNED exclusions, runtime_outputs and measured_outputs) must equal
+          the manifest set — and the tree must be clean (no symlinks, no
+          compiled Python outside runtime_outputs; see scan_tree).
+    The exclusion, runtime_outputs and measured_outputs lists live INSIDE the
+    signed conformance, so a tamperer cannot widen them.
+    """
+    signed_mhash = mconf.get("manifest_sha256")
+    excluded = set(mconf.get("excluded") or [])
+    runtime = list(mconf.get("runtime_outputs") or [])
+    measured = list(mconf.get("measured_outputs") or [])
+    try:
+        mdoc = json.loads(open(os.path.join(base, "MANIFEST.json"), "rb").read())
+    except Exception as e:
+        return f"conformance carries a signed manifest but MANIFEST.json is unreadable: {e}"
+    files = mdoc.get("files") if isinstance(mdoc, dict) else None
+    if not isinstance(files, list):
+        return "MANIFEST.json has no files array"
+    # (a) the shipped files array must hash to the SIGNED manifest hash.
+    recomputed = hashlib.sha256(canonical(files).encode("utf-8")).hexdigest()
+    if recomputed != signed_mhash:
+        return f"MANIFEST.json files hash {recomputed[:16]} != SIGNED manifest_sha256 {str(signed_mhash)[:16]} — manifest tampered"
+    if mdoc.get("manifest_sha256") != signed_mhash:
+        return "MANIFEST.json manifest_sha256 disagrees with SIGNED conformance.manifest — manifest tampered"
+    if mconf.get("file_count") != len(files):
+        return f"SIGNED file_count {mconf.get('file_count')} != MANIFEST.json files {len(files)}"
+    # (b) every listed path normalised, unique, a regular file with exact size + hash.
+    manifest_paths = set()
+    for ent in files:
+        p = ent.get("path") if isinstance(ent, dict) else None
+        perr = manifest_path_error(p)
+        if perr:
+            return perr + " — manifest tampered"
+        if p in manifest_paths:
+            return f"manifest lists {p} more than once — manifest tampered"
+        manifest_paths.add(p)
+        full = os.path.join(base, p)
+        if os.path.islink(full):
+            return f"manifest lists {p} but it is a symlink — refusing to follow it (tampered)"
+        try:
+            fb = open(full, "rb").read()
+        except Exception as e:
+            return f"manifest lists {p} but it is missing/unreadable: {e}"
+        if len(fb) != ent.get("size"):
+            return f"{p}: size {len(fb)} != manifest {ent.get('size')} — file tampered"
+        fh = hashlib.sha256(fb).hexdigest()
+        if fh != ent.get("sha256"):
+            return f"{p}: sha256 {fh[:16]} != manifest {str(ent.get('sha256'))[:16]} — file tampered"
+    # (c) tree hygiene, then no added/unlisted delivered file and none removed.
+    on_disk, measured_seen, problems = scan_tree(base, runtime, measured, excluded)
+    if problems:
+        return f"{len(problems)} tree problem(s) — tampered or unclean tree: {problems[:5]}"
+    extra = sorted(on_disk - manifest_paths)
+    missing = sorted(manifest_paths - on_disk)
+    if extra:
+        return f"{len(extra)} delivered file(s) NOT in the signed manifest (added/unlisted): {extra[:5]}"
+    if missing:
+        return f"{len(missing)} manifest file(s) missing on disk: {missing[:5]}"
+    if measured_seen and notes is not None:
+        notes.append("post-release measured supply-chain files present (declared in the SIGNED identity; "
+                     f"validated by the shipped supply-chain verify job): {measured_seen}")
+    return None
+
+
+def main() -> None:
+    try:
+        base, trusted_root = parse_argv(sys.argv[1:])
+    except ValueError as e:
+        fail(str(e))
+    if base is None:
+        base = os.path.dirname(os.path.abspath(__file__))
     try:
         identity = json.loads(open(os.path.join(base, "identity.json")).read())
     except Exception as e:
         fail(f"cannot read identity.json: {e}")
-    # delivery_mode HANDOFF — a customer-owned, UNSIGNED, editable build. It carries
-    # delivery_mode == "handoff" and signature == null and makes NO attestation
-    # claim, so there is no signature chain and no signed file manifest to verify.
-    # Print a clear banner and exit 0 WITHOUT running the signature/manifest checks.
-    # This is exactly what makes a handoff bundle freely editable (no signature to
-    # break) AND what stops a handoff masquerading as sealed: a SEALED bundle never
-    # has delivery_mode == "handoff" (a missing/invalid signature still FAILS below),
-    # and a handoff bundle never carries a signature to trust.
+    if not isinstance(identity, dict):
+        fail("identity.json is not a JSON object")
+    # delivery_mode HANDOFF — a customer-owned, UNSIGNED, editable build. It
+    # carries delivery_mode == "handoff" and signature == null and makes NO
+    # attestation claim: there is no signature chain and no signed manifest to
+    # verify. It is reported as NOT VERIFIABLE and exits 2 — never 0, with or
+    # without --trusted-root, so a script that treats exit 0 as "verified" can
+    # never mistake an unsigned build for a genuine one.
     if identity.get("delivery_mode") == "handoff" and identity.get("signature") is None:
-        print("HANDOFF (unsigned, editable) — not attested")
-        sys.exit(0)
+        not_verifiable("HANDOFF build (unsigned, editable) — no signature to verify, nothing is attested"
+                       + (" — cannot anchor to --trusted-root" if trusted_root is not None else ""))
     if identity.get("signature_pending"):
-        fail(f"identity is PENDING (no signature shipped): {identity.get('signature_pending_reason')}")
+        not_verifiable(f"identity is PENDING (no signature shipped): {identity.get('signature_pending_reason')}")
+    if not isinstance(identity.get("signature"), str) or not identity.get("signature"):
+        fail("identity.json carries no signature")
 
     # 1) recompute provenance_hash from karta.compiled.json (raw bytes)
     try:
@@ -219,49 +446,48 @@ def main() -> None:
     if on_disk_pub != identity.get("generator_pubkey_b64"):
         fail("generator.pub on disk does not match identity.json generator_pubkey_b64")
 
-    gen_pub = base64.b64decode(identity["generator_pubkey_b64"])
-    sig = base64.b64decode(identity["signature"])
+    try:
+        gen_pub = base64.b64decode(identity["generator_pubkey_b64"])
+        sig = base64.b64decode(identity["signature"])
+    except Exception as e:
+        fail(f"undecodable generator key or signature: {e}")
 
     # 3) verify the Ed25519 signature over the canonical payload
     if not ed25519_verify(gen_pub, sig, payload_for(identity)):
         fail("Ed25519 signature does not verify against generator public key")
 
-    # 4) root-chain check (optional but present in v1 bundles)
-    chain_ok = True
-    chain_note = ""
+    # 4) root-chain check — a broken chain FAILS (single verdict, exit 1)
     try:
         root_pub_disk = open(os.path.join(base, "root.pub")).read().strip()
-        if root_pub_disk != identity.get("root_pubkey_b64"):
-            chain_ok = False
-            chain_note = " (root.pub on disk does not match identity.json)"
-        else:
-            chain_sig = base64.b64decode(identity["generator_pubkey_signed_by_root_b64"])
-            root_pub = base64.b64decode(identity["root_pubkey_b64"])
-            if not ed25519_verify(root_pub, chain_sig, gen_pub):
-                chain_ok = False
-                chain_note = " (root signature on generator pubkey invalid)"
-    except KeyError:
-        chain_ok = False
-        chain_note = " (no root-chain fields in identity.json — pending)"
     except FileNotFoundError:
-        chain_ok = False
-        chain_note = " (root.pub missing — chain pending)"
-
-    # B9 — external trust anchor. The root fingerprint is sha256 of root.pub as
-    # shipped (base64 text, stripped) — the definition docs/verify_root_fingerprint.md
-    # gives for the out-of-band compare. With --trusted-root the compare is
-    # machine-enforced: a bundle whose root is not the pinned root FAILS even if
-    # its internal chain is consistent (a re-signed bundle under a foreign root).
-    root_fp = None
+        fail("root chain BROKEN — root.pub missing")
+    except Exception as e:
+        fail(f"root chain BROKEN — root.pub unreadable: {e}")
+    if root_pub_disk != identity.get("root_pubkey_b64"):
+        fail("root chain BROKEN — root.pub on disk does not match identity.json")
     try:
-        root_fp = hashlib.sha256(open(os.path.join(base, "root.pub")).read().strip().encode()).hexdigest()
-    except Exception:
-        root_fp = None
+        chain_sig = base64.b64decode(identity["generator_pubkey_signed_by_root_b64"])
+        root_pub = base64.b64decode(identity["root_pubkey_b64"])
+    except KeyError:
+        fail("root chain BROKEN — no root-chain fields in identity.json")
+    except Exception as e:
+        fail(f"root chain BROKEN — undecodable root-chain fields: {e}")
+    if not ed25519_verify(root_pub, chain_sig, gen_pub):
+        fail("root chain BROKEN — root signature on generator pubkey invalid")
+
+    # 4b) B9 — external trust anchor. The root fingerprint is sha256 of root.pub
+    # as shipped (base64 text, stripped) — the definition
+    # docs/verify_root_fingerprint.md gives for the out-of-band compare. With
+    # --trusted-root the compare is machine-enforced: a bundle whose root is not
+    # the pinned root FAILS ('NOT ANCHORED') even if its internal chain is
+    # consistent (a re-signed bundle under a foreign root). Without the flag the
+    # fingerprint is still printed, marked unanchored, for a manual compare.
+    root_fp = root_fingerprint(base)
     if trusted_root is not None:
         if root_fp is None:
-            fail("--trusted-root given but root.pub is missing — cannot anchor")
+            fail("root NOT ANCHORED — --trusted-root given but root.pub is missing/unreadable, cannot anchor")
         if root_fp != trusted_root:
-            fail(f"root fingerprint {root_fp[:16]}… does not match the trusted root {trusted_root[:16]}… — identity chain is anchored to an unknown root")
+            fail(f"root {root_fp[:16]}… NOT ANCHORED — does not match the trusted root {trusted_root[:16]}… — identity chain is anchored to an unknown root")
 
     conf = identity.get("conformance") or {}
     # Cross-check the shipped CEVE report against the SIGNED conformance. The
@@ -287,10 +513,10 @@ def main() -> None:
         if _rep.get("score") is not None and _rep.get("score") != _expected:
             fail(f"reports/ceve_validation.json score={_rep.get('score')} != score implied by SIGNED conformance ({_expected}) — report tampered")
 
-    # Fas 1.3 — flerdimensionell attestering: artifact-/build-räkningarna och
-    # release-verdicten är signerade; rapporten måste stämma med dem. En signerad
-    # identitet får ALDRIG bära BLOCKED (signeringsgrinden hoppar över signering
-    # på blockerade byggen — se release gate i fabriken).
+    # Phase 1.3 — multi-dimensional attestation: the artifact/build counts and
+    # the release verdict are signed; the report must agree with them. A signed
+    # identity must NEVER carry BLOCKED (the signing gate skips signing
+    # on blocked builds — see the release gate in the factory).
     _rart = _rep.get("artifact_conformance") or {}
     _rbld = _rep.get("build_integrity") or {}
     for _label, _got, _signed in (
@@ -309,11 +535,11 @@ def main() -> None:
     if _rv is not None and bool(_rep.get("build_blocked")) != (_rv == "BLOCKED"):
         fail(f"reports/ceve_validation.json build_blocked={_rep.get('build_blocked')} disagrees with SIGNED release_verdict={_rv}")
 
-    # Fas 2.8a — SIGNERAD DESIGN-FINGERPRINT: mängderna räknas OM ur bundlens
-    # egna artefakter (karta.compiled.json + capability_truth.json) och måste
-    # vara identiska med de signerade hasharna. En nod, edge, capability eller
-    # action kan inte bytas, försvinna eller tillkomma utan att design-
-    # identiteten bryter — designändringar är EXPLICITA, aldrig tysta.
+    # Phase 2.8a — SIGNED DESIGN FINGERPRINT: the sets are RECOMPUTED from the bundle's
+    # own artifacts (karta.compiled.json + capability_truth.json) and must
+    # be identical to the signed hashes. A node, edge, capability or
+    # action cannot be swapped, vanish or appear without breaking the design
+    # identity — design changes are EXPLICIT, never silent.
     _design = conf.get("design")
     if _design is not None:
         def _dhash(items):
@@ -347,91 +573,20 @@ def main() -> None:
             if _signed is not None and _got != _signed:
                 fail(f"design fingerprint {_label}={_got} disagrees with SIGNED ({_signed})")
 
-    # Fas 2.13e — SIGNERAT FILMANIFEST. Varje levererad fil (utom de
-    # strukturellt-post-signatur-exkluderade, som listas SIGNERAT i
-    # conformance.manifest.excluded) hashas; den kanoniska manifesthashen ligger
-    # i den Ed25519-signerade conformance. Detta steg fangar en kodandring som
-    # inte bryter nagot test (t.ex. DEFAULT_RETENTION_DAYS 365->366) och kors
-    # som verify_release steg 1/3, INNAN nagon bundle-kod importeras.
+    # Phase 2.13e — SIGNED FILE MANIFEST. Every delivered file (except the
+    # structurally post-signature-excluded ones, listed SIGNED in
+    # conformance.manifest.excluded) is hashed; the canonical manifest hash lives
+    # in the Ed25519-signed conformance. This step catches a code change that
+    # breaks no test (e.g. DEFAULT_RETENTION_DAYS 365->366) and runs
+    # as verify_release step 1/3, BEFORE any bundle code is imported.
+    notes = []
     _mconf = conf.get("manifest")
     if _mconf is not None:
-        _signed_mhash = _mconf.get("manifest_sha256")
-        _excluded = set(_mconf.get("excluded") or [])
-        try:
-            _mdoc = json.loads(open(os.path.join(base, "MANIFEST.json"), "rb").read())
-        except Exception as e:
-            fail(f"conformance carries a signed manifest but MANIFEST.json is unreadable: {e}")
-        _files = _mdoc.get("files")
-        if not isinstance(_files, list):
-            fail("MANIFEST.json has no files array")
-        # (a) the shipped files array must hash to the SIGNED manifest hash
-        _recomputed_mhash = hashlib.sha256(canonical(_files).encode("utf-8")).hexdigest()
-        if _recomputed_mhash != _signed_mhash:
-            fail(f"MANIFEST.json files hash {_recomputed_mhash[:16]} != SIGNED manifest_sha256 {str(_signed_mhash)[:16]} - manifest tampered")
-        if _mdoc.get("manifest_sha256") != _signed_mhash:
-            fail("MANIFEST.json manifest_sha256 disagrees with SIGNED conformance.manifest - manifest tampered")
-        if _mconf.get("file_count") != len(_files):
-            fail(f"SIGNED manifest file_count {_mconf.get('file_count')} != MANIFEST.json files {len(_files)}")
-        # (b) every listed file must exist with the EXACT size + sha256
-        _manifest_paths = set()
-        for _ent in _files:
-            _p = _ent.get("path")
-            _manifest_paths.add(_p)
-            try:
-                _fb = open(os.path.join(base, _p), "rb").read()
-            except Exception as e:
-                fail(f"manifest lists {_p} but it is missing/unreadable: {e}")
-            if len(_fb) != _ent.get("size"):
-                fail(f"{_p}: size {len(_fb)} != manifest {_ent.get('size')} - file tampered")
-            _fh = hashlib.sha256(_fb).hexdigest()
-            if _fh != _ent.get("sha256"):
-                fail(f"{_p}: sha256 {_fh[:16]} != manifest {str(_ent.get('sha256'))[:16]} - file tampered")
-        # (c) no UNLISTED delivered file (added code) and none removed: the disk
-        # set (minus the SIGNED exclusions, the SIGNED runtime_outputs, and
-        # runtime-generated dirs) must equal the manifest path set. runtime_outputs
-        # are files the bundle's OWN tooling writes when it runs (audit log, engine
-        # reports, eval outputs) — they ship in no zip, so a verify run AFTER
-        # execution must not read them as tampering. The list is SIGNED, so it
-        # cannot be widened by a tamperer.
-        import fnmatch
-        _runtime = list(_mconf.get("runtime_outputs") or [])
-        def _is_runtime_output(rel):
-            return any(fnmatch.fnmatch(rel, pat) for pat in _runtime)
-        # Fas 2.14b — SIGNED measured_outputs: post-release supply-chain material
-        # the SHIPPED CI measures and commits (hashed lock, SBOM, base digest).
-        # Ignored in the sweep like runtime_outputs, but DISCLOSED below when
-        # present — silent tolerance would be a hole; the shipped supply-chain
-        # verify job validates their CONTENT fail-closed. The list is SIGNED, so
-        # a tamperer cannot widen it.
-        _measured = list(_mconf.get("measured_outputs") or [])
-        def _is_measured_output(rel):
-            return any(fnmatch.fnmatch(rel, pat) for pat in _measured)
-        _measured_seen = []
-        # *.egg-info is deterministic in-tree debris of the SHIPPED package's own
-        # editable install (pip install -e . — run by the bundle's CI and by
-        # verify_release). Metadata only, never imported at runtime — same
-        # category as __pycache__ (Fas 2.14b: surfaced when the supply-chain
-        # verify leg ran the editable install before a re-verify).
-        _IGNORE_SEG = ("__pycache__", ".pytest_cache", ".git")
-        _on_disk = set()
-        for _root, _dirs, _fnames in os.walk(base):
-            _dirs[:] = [d for d in _dirs if d not in _IGNORE_SEG and not d.endswith(".egg-info")]
-            for _fn in _fnames:
-                _rel = os.path.relpath(os.path.join(_root, _fn), base).replace(os.sep, "/")
-                if _is_measured_output(_rel):
-                    _measured_seen.append(_rel)
-                    continue
-                if _rel.endswith(".pyc") or _rel in _excluded or _is_runtime_output(_rel):
-                    continue
-                _on_disk.add(_rel)
-        _extra = sorted(_on_disk - _manifest_paths)
-        _missing = sorted(_manifest_paths - _on_disk)
-        if _extra:
-            fail(f"{len(_extra)} delivered file(s) NOT in the signed manifest (added/unlisted): {_extra[:5]}")
-        if _missing:
-            fail(f"{len(_missing)} manifest file(s) missing on disk: {_missing[:5]}")
-        if _measured_seen:
-            print(f"post-release measured supply-chain files present (declared in the SIGNED identity; validated by the shipped supply-chain verify job): {sorted(_measured_seen)}")
+        _merr = verify_manifest(base, _mconf, notes)
+        if _merr:
+            fail(_merr)
+    for _n in notes:
+        print(_n)
 
     purity = conf.get("purity_score", "?")
     pmax = conf.get("purity_max", "?")
@@ -439,14 +594,15 @@ def main() -> None:
     dpass = conf.get("doctrine_pass", "?")
     dtot = conf.get("doctrine_total", "?")
     gen_id = identity.get("generator_id", "?")
-    chain_tag = "root-chained ✓" if chain_ok else f"root-chain BROKEN{chain_note}"
     _fp_short = (root_fp[:16] + "…") if root_fp else "?"
     anchor_tag = (f"root {_fp_short} ANCHORED ✓ (matches --trusted-root)" if trusted_root is not None
                   else f"root {_fp_short} (unanchored — compare out-of-band or pass --trusted-root)")
+    # The single verdict line. build-purity is the factory-measured value carried
+    # in the SIGNED identity — printed, not re-measured here.
     print(
-        f"genuine ✓ / doctrine {dpass}/{dtot} re-verified (v{doctrine_ver}) / build-purity {purity}/{pmax} / generator {gen_id} / {chain_tag} / {anchor_tag}"
+        f"genuine ✓ / doctrine {dpass}/{dtot} re-verified (v{doctrine_ver}) / build-purity {purity}/{pmax} (signed) / generator {gen_id} / root-chained ✓ / {anchor_tag}"
     )
-    sys.exit(0 if chain_ok else 1)  # broken root chain now FAILS (was exit 0)
+    sys.exit(0)
 
 
 if __name__ == "__main__":
