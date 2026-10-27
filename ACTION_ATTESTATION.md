@@ -27,8 +27,8 @@ A receiver that does not know the header ignores it. Nothing is required of the 
 
 The token binds the layers that already exist inside a HexaBox fleet:
 
-1. **Standing mandate — identity + lease.** The executing agent ships a root-chained, Ed25519-signed `identity.json` (schema `hexabox.identity/v1`) and acts under a coordinator-signed capability lease (`fleet_lease/v1`: scope, expiry, posture). → `executor`, `mandate`.
-2. **Per-action sanction — approvals.** Every privileged action has a content-bound reference (hash over action, target, parameters, tenant, tier). An approval is a signed record pinned to that reference, by a role-holding, MFA-bound approver, with a single-use nonce. Tier 4 requires two independent approvers. → `approval`.
+1. **Standing identity.** The executing agent ships a root-chained, Ed25519-signed `identity.json` (schema `hexabox.identity/v1`). The runtime verifies that chain before it states `executor.identity_signed: true`. → `executor`. Capability leases that scope fleet members are a separate, internal layer and are not stated in this token.
+2. **Per-action sanction — approvals.** Every privileged action has a content-bound reference (hash over action, target, parameters, tenant, tier). An approval is a record pinned to that reference, made by an authenticated, role-holding, MFA-bound approver, with a single-use nonce; it carries an Ed25519 signature when the deployment configures approver keys. The fleet dispatches only when the number of distinct approvers reaches the stricter of the authority's stated requirement and the fleet's own floor (`FLEET_ACTION_APPROVAL_MIN`). Tier 4 requires two independent approvers. → `mandate`, `approval`.
 3. **The command itself.** An immutable logical command (`command_id`, `event_id`, `customer_id`, `action`, `provider_action`, `target`, `parameters`, validity window) with a SHA-256 digest; the durable lifecycle guarantees a single dispatch under one idempotency key. → `command`, `idempotency_key`.
 
 ## 4. Wire format
@@ -54,7 +54,8 @@ X-HexaID-Attestation: <base64url(payload_bytes)>.<base64url(signature)>
   "idempotency_key": "<64 hex — equals the Idempotency-Key header on the same request>",
   "executor": {
     "agent_id": "<HexaID agent uuid>", "generator_id": "<16 hex>", "root_id": "<16 hex>",
-    "provenance_hash": "<64 hex>", "doctrine_version": "ruleset-14i-1.0.0", "identity_signed": true
+    "provenance_hash": "<64 hex>", "doctrine_version": "ruleset-14i-1.0.0",
+    "identity_signed": true, "identity_root_anchored": true
   },
   "signer": { "id": "<16 hex = sha256(pubkey)[:16]>", "pubkey_b64": "<32-byte Ed25519 public key, base64>" },
   "command": {
@@ -63,10 +64,13 @@ X-HexaID-Attestation: <base64url(payload_bytes)>.<base64url(signature)>
     "target": { "incident_id": "…", "workload_id": "…" }, "parameters": {},
     "created_at": "…", "expires_at": "…", "digest": "<64 hex over the immutable command>"
   },
-  "mandate": { "tier": "tier_4", "source": "fleet dispatch gate — …" },
+  "mandate": {
+    "tier": "tier_4", "basis": "…", "required_approvals": 2, "approval_floor": 1,
+    "approvals_given": 2, "source": "fleet dispatch gate: 2 independent MFA-bound approval(s) required …"
+  },
   "approval": {
     "authority": "soc_command_authority", "status": "approved",
-    "revision": 2, "observed_at": "…", "required": 2,
+    "revision": 2, "observed_at": "…", "required": 2, "required_effective": 2, "given": 2,
     "approvers": [ { "principal_hash": "<16 hex>", "role": "supervisor", "at": "…" }, { … } ]
   },
   "posture": { "posture": "normal", "revision": 7 }
@@ -80,11 +84,11 @@ X-HexaID-Attestation: <base64url(payload_bytes)>.<base64url(signature)>
 | `issued_at`, `expires_at` | UTC ISO-8601. TTL is 300 s — a token is for one dispatch, now. |
 | `audience` | Host (netloc) of the exact provider URI being called. Refuse a token whose audience is not you. |
 | `idempotency_key` | The 64-hex durable dispatch key; equals the `Idempotency-Key` header on the same request. Binds the token to one request. |
-| `executor` | The executing agent's HexaID fields, copied from its signed `identity.json`. `identity_signed` is informational; the identity's own signature is verified with `verify_identity.py`, not here. |
+| `executor` | The executing agent's HexaID fields, copied from its signed `identity.json`. `identity_signed` is true only when the runtime verified the identity's Ed25519 chain at mint time (generator signature over the canonical identity, `generator.pub` and `root.pub` pins, root signature over the generator key). `identity_root_anchored` is true or false when the runtime pins a trusted root fingerprint, and null when it pins none (the chain was then checked for internal consistency only). A receiver that needs certainty verifies the identity itself with `verify_identity.py --trusted-root`. |
 | `signer` | The attestation signing key. **Verify against the pin on `TRUST.md`, not this field**; a verifier additionally refuses a token whose embedded key differs from the pinned one (`signer_not_pinned`). |
 | `command` | The immutable command and its digest. `target` and `parameters` are copied verbatim so the receiver can compare them with the request it is executing. |
-| `mandate` | The tier the dispatch gate enforced and where that tier comes from. In v1 every provider response action executes under the fleet's tier-4 dual-approval gate. |
-| `approval` | Fresh read of the customer's command authority at dispatch: `revision` (approvals recorded), `required` (what the authority demanded), `approvers` (hashed principal, role, time). `principal_hash` = `sha256(casefold(whitespace-normalised principal_id))[:16]`. |
+| `mandate` | What this command executed under: `tier` is the CCAS tier the command authority recorded for this command's proposal (null for an analyst override, which has no CCAS decision); `basis` is the authority's stated basis; `required_approvals` is the count the fleet enforced (the stricter of the authority's count and the fleet floor); `approval_floor` is that floor; `approvals_given` is the number of distinct approvers recorded. `source` restates these numbers in words. |
+| `approval` | Fresh read of the customer's command authority at dispatch: `status` (as read from the authority), `revision` (approvals recorded), `required` (what the authority demanded), `required_effective` (what the fleet enforced), `given` (distinct approvers), `approvers` (hashed principal, role, time). `principal_hash` = `sha256(casefold(whitespace-normalised principal_id))[:16]`. |
 | `posture` | The customer's fleet posture and its revision at the commit window. Provider actions dispatch only under `normal`. |
 
 ## 6. Verification (normative)
@@ -127,7 +131,6 @@ The token carries no credential, no bearer token, no incident content beyond the
 | Artifact | Signed by | Verified with | Anchors to |
 |---|---|---|---|
 | `identity.json` (`hexabox.identity/v1`) | factory generator key, root-chained | `verify_identity.py --trusted-root` | root fingerprint on `TRUST.md` |
-| fleet lease (`fleet_lease/v1`) | coordinator key | member runtime (internal) | signed fleet registry |
 | **action attestation (`hexabox.action_attestation/v1`)** | **fleet attestation signer** | **`verify_action_attestation.py --trusted-pubkey`** | **signer pin on `TRUST.md`** |
 
 ## 10. Versioning
