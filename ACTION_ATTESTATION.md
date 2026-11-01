@@ -59,6 +59,13 @@ X-HexaID-Attestation: <base64url(payload_bytes)>.<base64url(signature)>
   },
   "signer": { "id": "<16 hex = sha256(pubkey)[:16]>", "pubkey_b64": "<32-byte Ed25519 public key, base64>" },
   "command": {
+    "schema_version": 2,
+    "proposal": {
+      "agent_id": "<the proposing specialist's HexaID agent uuid>", "agent_name": "hexaendpoint",
+      "node_identity": "<32 hex, IDENTITY.md>", "lease_id": null, "tenant_id": "…",
+      "assessment_sha256": "<64 hex>", "signature": { "alg": "ed25519", "key_id": "<16 hex>", "sig": "<128 hex>" },
+      "verified": true
+    },
     "command_id": "…", "event_id": "…", "customer_id": "…",
     "action": "isolate_host", "provider_action": "WORKLOAD_ISOLATE",
     "target": { "incident_id": "…", "workload_id": "…" }, "parameters": {},
@@ -87,10 +94,12 @@ X-HexaID-Attestation: <base64url(payload_bytes)>.<base64url(signature)>
 | `idempotency_key` | The 64-hex durable dispatch key; equals the `Idempotency-Key` header on the same request. Binds the token to one request. |
 | `executor` | The executing agent's HexaID fields, copied from its signed `identity.json`. `identity_signed` is true only when the runtime verified the identity's Ed25519 chain at mint time (generator signature over the canonical identity, `generator.pub` and `root.pub` pins, root signature over the generator key). `identity_root_anchored` is true or false when the runtime pins a trusted root fingerprint, and null when it pins none (the chain was then checked for internal consistency only). A receiver that needs certainty verifies the identity itself with `verify_identity.py --trusted-root`. |
 | `signer` | The attestation signing key. **Verify against the pin on `TRUST.md`, not this field**; a verifier additionally refuses a token whose embedded key differs from the pinned one (`signer_not_pinned`). |
-| `command` | The immutable command and its digest. `target` and `parameters` are copied verbatim so the receiver can compare them with the request it is executing. |
+| `command` | The immutable command and its digest. `target` and `parameters` are copied verbatim so the receiver can compare them with the request it is executing. `schema_version` 2 (2026-11-01) adds `proposal`: **who proposed this action** — the specialist's signed `agent_id`, its registry-bound name, the `node_identity` of the node that emitted the assessment, the tenant, the sha256 of the assessment and the specialist's Ed25519 signature over it (`key_id` = the agent's identity key, `IDENTITY.md`), and `verified: true` (the SOC verified that signature against the fleet's member registry before the command was created). The block is inside the canonical command, so the approval digest and this token bind the proposer. `proposal` is null for a v1 command (an analyst override, a disposition, an unverified delivery) — a command is never dressed up as a proven proposal. |
 | `mandate` | What this command executed under: `tier` is the CCAS tier the command authority recorded for the command; `tier_effective` is the tier the fleet enforced, `tier_resolution` how it was determined (a tier the fleet cannot determine is treated as tier 4) and `tier_floor` the approvals that tier requires; `basis` is the authority's stated basis; `required_approvals` is the count the fleet enforced (the strictest of the authority's count, the fleet floor and the tier floor); `approval_floor` is the fleet floor; `approvals_given` is the number of distinct approvers recorded. `source` restates these numbers and the recorded MFA basis in words. |
 | `approval` | Fresh read of the customer's command authority at dispatch: `status` (as read from the authority), `revision` (approvals recorded), `required` (what the authority demanded), `required_effective` (what the fleet enforced), `given` (distinct approvers), `approvers` (hashed principal, role, time, and `mfa_basis` as the authority recorded it, null when it recorded none). `principal_hash` = `sha256(normalised principal_id)[:16]`, where normalised means Unicode NFKC, trimmed, internal whitespace collapsed to one space, case-folded. |
 | `posture` | The customer's fleet posture and its revision at the commit window. Provider actions dispatch only under `normal`. |
+
+A receiver can verify `proposal.signature` independently: the digest is sha256 over the delivered assessment without its `signed`/`signature` slots (sorted keys, compact separators, ASCII JSON), the signature is Ed25519 over those 32 bytes, and the public key is the one the specialist's signed identity names (`agent_pubkey_b64`, `IDENTITY.md`).
 
 ## 6. Verification (normative)
 
