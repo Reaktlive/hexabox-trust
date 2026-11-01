@@ -18,6 +18,16 @@ The independent check is to run the reference copy from this repository (`verifi
 
 Verdicts: exit 0 prints one line beginning `genuine ✓`; exit 1 prints `FAILED ✗` (tampering, a broken root chain, a root that does not match `--trusted-root`, a symlink or compiled Python outside the signed runtime outputs, or a manifest path that is not a normalised relative path); exit 2 prints `NOT VERIFIABLE ✗` (an unsigned handoff build or a pending identity — nothing is attested).
 
+## Accepted roots
+
+The roots a Fleet Command instance accepts an *external* agent from (`ENROLLMENT.md`, `FLEET_TRUSTED_ROOTS_SHA256`). Today one root: our own.
+
+| Root fingerprint | Owner | Since |
+|---|---|---|
+| `b5569d76d434123dc2f42c9dc54c13fdde0540c0143d2c68bdb6e877372405d6` | HexaBox factory root (above) | 2026-11-01 |
+
+Agent identity: `IDENTITY.md` (`hexabox.identity/v2` — the agent's own key inside the signed identity, node identities). A Fleet Command instance's identity key is its action-attestation signer (`signer_id` below = the instance's `agent_key_id`).
+
 ## Pins
 
 | Pin | Value |
@@ -36,11 +46,13 @@ Verdicts: exit 0 prints one line beginning `genuine ✓`; exit 1 prints `FAILED 
 | `verifiers/delivery_manifest.py` | `52027c06400cfbb0e4656fd400b80e82eedacae54a6fcec07d8639db9f2546fa` |
 | `verifiers/fleet_manifest.py` | `a48dab4803fd0173f3f7952f14d5e9e9c5a97625e8bf74cc7d0d88e95a32a181` |
 | `verifiers/test_outer_verifiers.py` | `877bb41d1cbf82e4853383b2d104bd8eac6925fda971381d2381d56e702b8583` |
-| `verifiers/verify_identity.py` | `639309667fe7598550dcc18161159f99fc32fa4104577eaee6f27f3f50fc9ace` |
+| `verifiers/verify_identity.py` | `b58d2767aee862aea577e39382e3fadb4330cd86905e3678234adb2f68ae3e6b` (identity v2 + node identity, 2026-11-01; the previous reference `639309667fe7…` verifies v1 bundles and v2 seals but not the v2 key binding) |
 | `verifiers/verify_action_attestation.py` | `4c12842e1574038e96d07b02ff277755f6f843502ace6daa4c93d274a3d045e1` |
 | `ceremony_record.json` | `81695ad4db7e4a161f8c70eae2567c8761cad7cb524920a6afb9aba983514196` |
 | `revocations.json` | `199f24efc0e284ace0e52a0be7da78c586993c4a3aa5362687b718e0ca2dd628` |
-| `ACTION_ATTESTATION.md` | `96c364736dcd7bc1cded7cc8c67fd55c53debc9bb549ee60011b95c430ce3b5c` |
+| `ACTION_ATTESTATION.md` | see `SHA256SUMS` |
+| `IDENTITY.md` | see `SHA256SUMS` |
+| `ENROLLMENT.md` | see `SHA256SUMS` |
 
 ## Revocations
 

@@ -183,6 +183,49 @@ def payload_for(identity: dict) -> bytes:
     return canonical(core).encode("utf-8")
 
 
+def identity_v2_problem(identity: dict):
+    """Identity chain (2026-11-01) — hexabox.identity/v2 carries the agent's OWN
+    Ed25519 public key INSIDE the signed body (agent_pubkey_b64 + agent_key_id). The
+    identity signature (verified above over every field) is the generator's
+    certificate that THIS agent_id holds THIS key. Returns None for a sound v2 (or
+    for v1, which has no such fields), else the reason to FAIL."""
+    if identity.get("schema") != "hexabox.identity/v2":
+        return None
+    raw = identity.get("agent_pubkey_b64")
+    if not isinstance(raw, str) or not raw:
+        return "identity v2: agent_pubkey_b64 missing"
+    try:
+        pub = base64.b64decode(raw, validate=True)
+    except Exception:
+        return "identity v2: agent_pubkey_b64 undecodable"
+    if len(pub) != 32 or base64.b64encode(pub).decode("ascii") != raw:
+        return "identity v2: agent_pubkey_b64 is not a canonical 32-byte Ed25519 key"
+    try:
+        P = _decodepoint(pub)
+        if not _isoncurve(P) or _is_small_order(P):
+            return "identity v2: agent public key is not a valid Ed25519 key (off-curve or small-order)"
+    except Exception:
+        return "identity v2: agent public key is not decodable as a curve point"
+    want = hashlib.sha256(pub).hexdigest()[:16]
+    if identity.get("agent_key_id") != want:
+        return f"identity v2: agent_key_id {identity.get('agent_key_id')!r} does not name the key (expected {want})"
+    return None
+
+
+def node_identity(agent_id: str, node_id: str) -> str:
+    """Identity chain (2026-11-01) — stable, global node identity: derived ONLY from
+    the agent's factory id and the node's name, never from code (the code binding is
+    the signed manifest + provenance_hash). Same formula as the factory (bundleBuilder)."""
+    return hashlib.sha256(("hexabox.node_identity/v1\n" + str(agent_id) + "\n" + str(node_id)).encode("utf-8")).hexdigest()[:32]
+
+
+def node_identity_set_hash(agent_id: str, node_ids: list) -> str:
+    """Canonical set hash over the derived node identities (sorted JSON array,
+    compact separators) — byte-identical to the factory's canonicalSetHash."""
+    items = sorted(node_identity(agent_id, n) for n in node_ids)
+    return hashlib.sha256(json.dumps(items, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+
+
 def fail(msg: str) -> None:
     print(f"FAILED ✗ {msg}")
     sys.exit(1)
@@ -456,6 +499,11 @@ def main() -> None:
     if not ed25519_verify(gen_pub, sig, payload_for(identity)):
         fail("Ed25519 signature does not verify against generator public key")
 
+    # 3b) identity v2 — the agent's own key, bound inside the signed identity
+    _v2 = identity_v2_problem(identity)
+    if _v2:
+        fail(_v2)
+
     # 4) root-chain check — a broken chain FAILS (single verdict, exit 1)
     try:
         root_pub_disk = open(os.path.join(base, "root.pub")).read().strip()
@@ -572,6 +620,19 @@ def main() -> None:
         ):
             if _signed is not None and _got != _signed:
                 fail(f"design fingerprint {_label}={_got} disagrees with SIGNED ({_signed})")
+        # Identity chain (2026-11-01) — NODE IDENTITY. Each node's identity is
+        # re-derived from identity.agent_id + the node name; a karta that carries
+        # its own node_identity values must agree, and the signed set hash (when
+        # present) must equal the derived set. Older bundles without the field
+        # are not judged on it.
+        _aid = str(identity.get("agent_id") or "")
+        for _n in (_kt.get("nodes") or []):
+            _own = _n.get("node_identity")
+            if _own is not None and str(_own) != node_identity(_aid, str(_n.get("id"))):
+                fail(f"node identity mismatch for node {_n.get('id')!r} — karta carries {str(_own)[:16]}…, derived from the SIGNED agent_id is {node_identity(_aid, str(_n.get('id')))[:16]}…")
+        _signed_nid = _design.get("node_identity_set_hash")
+        if _signed_nid is not None and node_identity_set_hash(_aid, _d_nodes) != _signed_nid:
+            fail("design fingerprint node_identity_set_hash mismatch — the node identities derived from the SIGNED agent_id and the karta differ from the signed set")
 
     # Phase 2.13e — SIGNED FILE MANIFEST. Every delivered file (except the
     # structurally post-signature-excluded ones, listed SIGNED in
