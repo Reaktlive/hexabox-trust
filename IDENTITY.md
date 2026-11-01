@@ -15,6 +15,23 @@ The verifier refuses a v2 identity whose `agent_key_id` does not equal `sha256(a
 
 At runtime the agent reports whether the key it signs with is the key its identity names (`GET /fleet/lease/status` → `identity_key_binding.state`: `bound`, `mismatch`, `identity_v1`, `no_member_key`).
 
+## Lineage: node → agent → fleet (2026-11-02)
+
+When an agent belongs to a fleet in Studio, its identity carries a signed `lineage` block:
+
+| Field | Meaning |
+|---|---|
+| `lineage.fleet_id` | The Studio fleet (uuid) the agent belongs to. |
+| `lineage.fleet_name` | The fleet's name at issue time. |
+| `lineage.hub_agent_id` | The fleet's hub agent (the Fleet Command instance), or null. |
+| `lineage.assigned_at` | When Studio bound the agent to the fleet. |
+
+So every node can be traced: `node_identity` → the agent (`agent_id`, signed) → the fleet (`lineage`) → the fleet's hub. `lineage` is **descriptive**: it does not enable lease enforcement or any other gate. Enforcement is still derived only from `owner.fleet_id` / `fleet_managed` (fleet_trust.fleet_managed), which `lineage` never touches. A verifier refuses a `lineage` whose `fleet_id` is not a uuid or whose `fleet_name` is empty.
+
+## Reissued identities (2026-11-02)
+
+An agent that has been developed on after its birth (the SOC, the fleet, every specialist) gets its identity **reissued by Studio** from the repository at a named commit: Studio reads the repo, recomputes the file manifest and the design summary with the verifier's formulas, adds `lineage`, keeps the agent's key, and signs. The repository's code is never regenerated — the delivery is exactly three files (`identity.json`, `MANIFEST.json`, the two `.pub` pins) in a pull request. A design block created this way is marked `conformance.design.derived_at_reissue: true` with `design_source_commit`, so nobody reads it as the factory's original composition. Every issuance is recorded in Studio (`studio_identity_issuances`: agent, repo, commit, identity sha256, who, when, PR).
+
 ## Node identity
 
 Every node of every agent has a stable, global identity, independent of the node's code (the code is bound separately by the signed file manifest and `provenance_hash`):
