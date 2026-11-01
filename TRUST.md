@@ -26,7 +26,7 @@ The roots a Fleet Command instance accepts an *external* agent from (`ENROLLMENT
 |---|---|---|
 | `b5569d76d434123dc2f42c9dc54c13fdde0540c0143d2c68bdb6e877372405d6` | HexaBox factory root (above) | 2026-11-01 |
 
-Agent identity: `IDENTITY.md` (`hexabox.identity/v2` — the agent's own key inside the signed identity, node identities). A Fleet Command instance's identity key is its action-attestation signer (`signer_id` below = the instance's `agent_key_id`).
+Agent identity: `IDENTITY.md` (`hexabox.identity/v2` — the agent's own key inside the signed identity, node identities, `lineage` node → agent → fleet, reissue by Studio at a commit). A Fleet Command instance's identity key is its action-attestation signer (`signer_id` below = the instance's `agent_key_id`).
 
 ## Pins
 
