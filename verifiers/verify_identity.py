@@ -33,7 +33,7 @@ Values this verifier reports but does not re-measure (e.g. build-purity) are
 printed as the SIGNED value from identity.json, labelled "(signed)".
 """
 from __future__ import annotations
-import base64, fnmatch, hashlib, json, os, posixpath, sys
+import base64, fnmatch, hashlib, json, os, posixpath, re, sys
 from typing import Any
 
 
@@ -209,6 +209,27 @@ def identity_v2_problem(identity: dict):
     want = hashlib.sha256(pub).hexdigest()[:16]
     if identity.get("agent_key_id") != want:
         return f"identity v2: agent_key_id {identity.get('agent_key_id')!r} does not name the key (expected {want})"
+    return None
+
+
+def identity_lineage_problem(identity: dict):
+    """Identity chain (2026-11-02) — OPTIONAL signed lineage: node -> agent -> fleet.
+    lineage is a statement of belonging, never a gate: nothing here derives
+    enforcement from it (fleet_managed comes from owner.fleet_id, verified above as
+    part of the signed body). Returns None when absent or sound, else the reason."""
+    l = identity.get("lineage")
+    if l is None:
+        return None
+    if not isinstance(l, dict):
+        return "lineage: not an object"
+    fid = l.get("fleet_id")
+    if not isinstance(fid, str) or not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", fid):
+        return "lineage: fleet_id is not a uuid"
+    if not isinstance(l.get("fleet_name"), str) or not l.get("fleet_name").strip():
+        return "lineage: fleet_name missing"
+    hub = l.get("hub_agent_id")
+    if hub is not None and (not isinstance(hub, str) or not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", hub)):
+        return "lineage: hub_agent_id is not a uuid"
     return None
 
 
@@ -503,6 +524,9 @@ def main() -> None:
     _v2 = identity_v2_problem(identity)
     if _v2:
         fail(_v2)
+    _lin = identity_lineage_problem(identity)
+    if _lin:
+        fail(_lin)
 
     # 4) root-chain check — a broken chain FAILS (single verdict, exit 1)
     try:
@@ -597,13 +621,20 @@ def main() -> None:
         except Exception as e:
             fail(f"cannot parse karta.compiled.json for design verification: {e}")
         _kt = _kc.get("topology") or {}
-        _d_nodes = [str(n.get("id")) for n in (_kt.get("nodes") or [])]
-        _d_edges = ["%s.%s->%s.%s%s" % (e.get("source_agent"), e.get("source_port"), e.get("target_agent"), e.get("target_port"), "#routing" if e.get("kind") == "routing" else "") for e in (_kt.get("edges") or [])]
+        # nodes/edges are objects in every factory build; a bare string id is tolerated
+        _d_nodes = [str(n.get("id")) if isinstance(n, dict) else str(n) for n in (_kt.get("nodes") or [])]
+        _d_edges = ["%s.%s->%s.%s%s" % (e.get("source_agent"), e.get("source_port"), e.get("target_agent"), e.get("target_port"), "#routing" if e.get("kind") == "routing" else "") if isinstance(e, dict) else str(e) for e in (_kt.get("edges") or [])]
         try:
             _ct = json.loads(open(os.path.join(base, "capability_truth.json")).read())
         except Exception as e:
             fail(f"cannot read capability_truth.json for design verification: {e}")
-        _d_caps = ["%s=%s" % (n.get("id"), n.get("bucket")) for n in (_ct.get("nodes") or [])]
+        # capability_truth.nodes: list [{id, bucket}] (factory) or legacy dict {id: {class|bucket}}
+        # (pre-design bundles, e.g. the SOC) — one formula, mirrored in designFingerprint.ts.
+        _tn = _ct.get("nodes") or []
+        if isinstance(_tn, dict):
+            _d_caps = ["%s=%s" % (k, ((_tn.get(k) or {}).get("bucket") if isinstance(_tn.get(k), dict) and (_tn.get(k) or {}).get("bucket") is not None else (_tn.get(k) or {}).get("class") if isinstance(_tn.get(k), dict) else None)) for k in sorted(_tn)]
+        else:
+            _d_caps = ["%s=%s" % (n.get("id"), n.get("bucket")) for n in _tn]
         _pa = ((_kc.get("metadata") or {}).get("privileged_actions")) or _kc.get("privileged_actions") or []
         _d_acts = ["%s@%s" % (a.get("name"), a.get("tier")) for a in _pa]
         for _label, _items, _signed in (
@@ -627,6 +658,8 @@ def main() -> None:
         # are not judged on it.
         _aid = str(identity.get("agent_id") or "")
         for _n in (_kt.get("nodes") or []):
+            if not isinstance(_n, dict):
+                continue
             _own = _n.get("node_identity")
             if _own is not None and str(_own) != node_identity(_aid, str(_n.get("id"))):
                 fail(f"node identity mismatch for node {_n.get('id')!r} — karta carries {str(_own)[:16]}…, derived from the SIGNED agent_id is {node_identity(_aid, str(_n.get('id')))[:16]}…")
