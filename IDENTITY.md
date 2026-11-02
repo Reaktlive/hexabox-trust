@@ -40,6 +40,20 @@ Every node of every agent has a stable, global identity, independent of the node
 
 New builds write it into `karta.compiled.json` (`topology.nodes[].node_identity`); for earlier bundles it is derived from the signed identity and karta. It is what a command proposal and a HexaID action attestation name when they say *which node* proposed an action (`proposal.node_identity`, see `ACTION_ATTESTATION.md`).
 
+## The member-key registry and its manifest
+
+The SOC verifies every door-2 delivery signature against the fleet's **member-key registry** (`hexabox.member_registry.keys/v1`): members keyed by the agent's signed `agent_id`, each with `pubkey_hex`, `key_id` and `name`. The registry is written by deployment control (deploy-hub) from the env-store seeds and each member's signed identity, rebuilt after every member deploy, and mounted read-only in the SOC — the SOC never writes it.
+
+Since 2026-11-02 the registry is anchored by a **signed manifest** (`hexabox.member_registry.manifest/v1`) written next to it:
+
+| Field | Meaning |
+|---|---|
+| `body.registry_sha256` | sha256 of the registry's canonical JSON (sorted keys, no whitespace) |
+| `body.members`, `body.fleet_id`, `body.built_at` | descriptive |
+| `signature.key_id`, `signature.sig` | Ed25519 over the canonical JSON of the manifest without `signature`, by the registry manifest signer pinned on `TRUST.md` |
+
+The SOC pins the signer's public key (`FLEET_MANIFEST_PUBKEY`) and the manifest path (`FLEET_MANIFEST_PATH`). A registry whose hash does not match a *genuinely signed* manifest is treated as absent: every delivery then verifies as `no_registry`, which the observe mode counts and the require mode refuses. Nothing in the registry or the manifest is secret; the signer seed is held by deployment control only and never leaves the host. A reviewer re-checks a pair offline with `deploy-hub/scripts/deploy/member_keys.py verify --registry … --manifest … --pubkey-hex <pin>`, which is the SOC's acceptance rule line for line.
+
 ## One key per agent
 
 A Fleet Command instance's identity key is its action-attestation signing key: the `signer.id` pinned on `TRUST.md` equals the `agent_key_id` in the instance's signed identity (`ae3aeb73b0c64f67` for instance `ds5777`). A specialist's identity key is the key it signs its door-2 deliveries with; the fleet's member registry binds the same key to the same `agent_id`.

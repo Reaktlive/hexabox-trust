@@ -33,6 +33,7 @@ Agent identity: `IDENTITY.md` (`hexabox.identity/v2` — the agent's own key ins
 | Pin | Value |
 |---|---|
 | Fleet manifest signer (`verify_fleet_manifest.py --trusted-pubkey`) | `not yet published` |
+| **Member-key registry manifest signer** (the SOC's `FLEET_MANIFEST_PUBKEY`; spec `IDENTITY.md` → *The member-key registry and its manifest*; `deploy-hub member_keys.py verify --pubkey-hex`) | key_id `34cc6b2e0850459a` · pubkey (hex) `60d6e1bb200344febc77de10a8ae1f42f71fb8dad19710bb9166528038b81901` · pinned 2026-11-02 |
 | Delivery manifest signer (`verify_delivery_standalone.py --trusted-pubkey`) | `not yet published` |
 | **Action attestation signer** (`verify_action_attestation.py --trusted-pubkey`; spec `ACTION_ATTESTATION.md`; one pin per fleet instance, labelled by `signer.id`) | instance `ds5777` (Eihwaz fleet, executor agent `92052e6a-b350-41c8-8c51-5ba50da5a1d7`) · signer_id `ae3aeb73b0c64f67` · pubkey `TvoNGiXYfJSD0GjhBodX/UwOWeYNyxhOIVnWN+wNSj0=` · pinned 2026-10-24 |
 
