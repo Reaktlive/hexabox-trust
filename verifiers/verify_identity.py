@@ -92,9 +92,17 @@ def _scalarmult(P, e: int):
 
 
 def _decodepoint(s: bytes):
+    # RFC 8032 5.1.3, strict (2026-11-24): a y >= p, and "negative zero" (the sign bit set while x = 0), are not the
+    # encoding of any point and raise — as Node/WebCrypto refuse them, so the factory and the agent give one answer.
+    # A y with no x on the curve still decodes to a point that _isoncurve refuses (every caller checks it).
     y = int.from_bytes(s, "little") & ((1 << 255) - 1)
+    if y >= _p:
+        raise ValueError("not a canonical point encoding (y >= p)")
     x = _xrecover(y)
-    if x & 1 != (s[31] >> 7) & 1:
+    sign = (s[31] >> 7) & 1
+    if x == 0 and sign:
+        raise ValueError("not a canonical point encoding (negative zero)")
+    if x & 1 != sign:
         x = _p - x
     P = (x, y, 1, (x * y) % _p)
     return P
@@ -126,25 +134,57 @@ def _is_small_order(P) -> bool:
     return _is_identity(_scalarmult(P, 8))
 
 
+def _is_prime_order(P) -> bool:
+    # [L]P is the identity: P lies in the prime-order group, where every key made the ordinary way (A = a*B) lies.
+    # A key with a small-order part (a "torsion twin" A + T, or any mixed-order point) is another 32-byte value for
+    # the same secret, and this verifier (which does not multiply by the cofactor) accepts signatures under it that
+    # the holder can grind: one secret could pass as several keys. (2026-11-24; the factory's check is
+    # keyProof.isEd25519PublicKey, the same four rules.)
+    return _is_identity(_scalarmult(P, _L))
+
+
+_KEY_CACHE_MAX = 8192
+_KEY_POINTS = {}
+
+
+def _public_key_point(public_key):
+    """The point of a public key a signature may be trusted under, or None: 32 bytes, canonical (y < p, no negative
+    zero), on the curve, not of low order and of prime order. [L]A costs a scalar multiplication and the same keys
+    are checked again and again (approvers, the generator, the root), so the answer is kept per key: a pure function
+    of the 32 bytes, in a bounded cache."""
+    if not isinstance(public_key, (bytes, bytearray, memoryview)):
+        return None
+    k = bytes(public_key)
+    if k in _KEY_POINTS:
+        return _KEY_POINTS[k]
+    point = None
+    if len(k) == 32:
+        try:
+            P = _decodepoint(k)
+            if _isoncurve(P) and not _is_small_order(P) and _is_prime_order(P):
+                point = P
+        except Exception:
+            point = None
+    if len(_KEY_POINTS) >= _KEY_CACHE_MAX:
+        _KEY_POINTS.clear()
+    _KEY_POINTS[k] = point
+    return point
+
+
 def ed25519_verify(public_key: bytes, signature: bytes, message: bytes) -> bool:
     if len(signature) != 64 or len(public_key) != 32:
         return False
-    # Canonical point encoding: the y-coordinate must be < p (reject non-canonical
-    # / over-p encodings that decode to the same point).
-    if (int.from_bytes(signature[:32], "little") & ((1 << 255) - 1)) >= _p:
+    # The key: canonical, on the curve, not small-order (a genuine member key never
+    # is) and of prime order (no torsion twin) — _public_key_point.
+    A = _public_key_point(public_key)
+    if A is None:
         return False
-    if (int.from_bytes(public_key, "little") & ((1 << 255) - 1)) >= _p:
-        return False
+    # R: canonical (y < p, no negative zero: _decodepoint raises) and on the curve.
     try:
         R = _decodepoint(signature[:32])
-        A = _decodepoint(public_key)
     except Exception:
         return False
-    if not (_isoncurve(R) and _isoncurve(A)):
-        return False
-    # Reject small-order / identity public keys (a genuine member key is never
-    # small-order); this is the check the previous verifier lacked.
-    if _is_small_order(A):
+    if not _isoncurve(R):
         return False
     S = _decodeint(signature[32:])
     if S >= _L:
@@ -200,12 +240,16 @@ def identity_v2_problem(identity: dict):
         return "identity v2: agent_pubkey_b64 undecodable"
     if len(pub) != 32 or base64.b64encode(pub).decode("ascii") != raw:
         return "identity v2: agent_pubkey_b64 is not a canonical 32-byte Ed25519 key"
-    try:
-        P = _decodepoint(pub)
+    # the decision is the bundle's one key rule (_public_key_point); the lines after it only say which part failed
+    # (a key written with y >= p is no encoding: refused since 2026-11-24, as the factory refuses it)
+    if _public_key_point(pub) is None:
+        try:
+            P = _decodepoint(pub)
+        except Exception:
+            return "identity v2: agent public key is not decodable as a curve point"
         if not _isoncurve(P) or _is_small_order(P):
             return "identity v2: agent public key is not a valid Ed25519 key (off-curve or small-order)"
-    except Exception:
-        return "identity v2: agent public key is not decodable as a curve point"
+        return "identity v2: agent public key is not in the prime-order group (mixed order)"
     want = hashlib.sha256(pub).hexdigest()[:16]
     if identity.get("agent_key_id") != want:
         return f"identity v2: agent_key_id {identity.get('agent_key_id')!r} does not name the key (expected {want})"
